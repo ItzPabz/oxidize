@@ -1,10 +1,10 @@
 # Oxidize
 
-A small CLI that checks whether your Oxide/uMod Rust plugins (`.cs`) actually compile — before you push them to a live server.
+A CLI that checks whether your Oxide/uMod Rust plugins (`.cs`) actually compile — before you push them to a live server.
 
 ## Install
 
-Download `oxidize-windows.exe` (or `oxidize-linux`) from the [latest release](https://github.com/ItzPabz/oxidize/releases/latest).
+Download `oxidize-win.exe` (or `oxidize-linux`) from the [latest release](https://github.com/ItzPabz/oxidize/releases/latest).
 
 ## Requirements
 
@@ -32,7 +32,7 @@ oxidize <PATH>
 oxidize ./plugins
 ```
 ```
-OK    Vanish
-FAIL  Custom Craft Times (3 errors)
+OK    Working Plugin
+FAIL  Broken Plugin (3 errors)
         error CS0117: 'MemoryExtensions' does not contain ...
 ```

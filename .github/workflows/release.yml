@@ -36,7 +36,7 @@ jobs:
         include:
           - os: windows-latest
             built: target/release/oxidize.exe
-            asset: oxidize-windows.exe
+            asset: oxidize-win.exe
           - os: ubuntu-latest
             built: target/release/oxidize
             asset: oxidize-linux

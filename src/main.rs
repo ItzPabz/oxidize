@@ -1,13 +1,12 @@
 use clap::{Parser, ValueEnum};
 use directories::ProjectDirs;
 use netcorehost::{nethost, pdcstr, pdcstring::PdCString};
+use std::ffi::{CStr, CString};
 use std::process::Command;
 use std::{
     fs::DirEntry,
     path::{Path, PathBuf},
 };
-use std::ffi::{CStr, CString};
-
 
 #[derive(serde::Serialize)]
 struct CompileRequest {
@@ -56,7 +55,7 @@ enum CompileResult {
 struct Plugin {
     path: PathBuf,
     name: String,
-    author: String,
+    author: String, // TODO: Add author print.
 }
 
 impl Plugin {
@@ -152,16 +151,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let installed_compiler = compiler_dir(&dirs);
-    for (name, result) in compile_all(&parsed, &libraries, &installed_compiler)? {
+    for (name, author, result) in compile_all(&parsed, &libraries, &installed_compiler)? {
         match result {
-            CompileResult::Success => println!("OK    {name}"),
+            CompileResult::Success => println!("OK    {name} by {author}"),
             CompileResult::Failure(errors) => {
-                println!("FAIL  {name} ({} errors)", errors.len());
+                println!("FAIL  {name} by {author} ({} errors)", errors.len());
                 for e in &errors {
                     println!("        {e}");
                 }
             }
-            CompileResult::Errored(msg) => println!("ERROR {name}: {msg}"),
+            CompileResult::Errored(msg) => println!("ERROR {name} by {author}: {msg}"),
         }
     }
 
@@ -235,7 +234,10 @@ fn ensure_libraries(dirs: &ProjectDirs, branch: &Branch) -> std::io::Result<()> 
     let assembly = library_path.join("RustDedicated_Data/Managed/Assembly-CSharp.dll");
 
     if assembly.exists() {
-        println!("Libraries installed.");
+        match installed_manifest(&library_path) {
+            Some(manifest) => println!("Libraries installed (manifest {manifest})."),
+            None => println!("Libraries installed."),
+        }
     } else {
         println!("Libraries missing. Installing now.");
         let exe_name = format!("DepotDownloader{}", std::env::consts::EXE_SUFFIX);
@@ -306,7 +308,6 @@ fn ensure_oxide(dirs: &ProjectDirs, branch: &Branch) -> Result<(), Box<dyn std::
     Ok(())
 }
 
-
 fn compiler_dir(dirs: &ProjectDirs) -> PathBuf {
     dirs.data_local_dir().join("tools").join("compiler")
 }
@@ -323,10 +324,9 @@ fn ensure_compiler(dirs: &ProjectDirs) -> Result<(), Box<dyn std::error::Error>>
         println!("  Installing OxideCompiler.");
         std::fs::create_dir_all(&compiler_path)?;
 
-        let mut resp =
-            ureq::get("https://api.github.com/repos/ItzPabz/oxidize/releases/latest")
-                .header("User-Agent", "oxidize")
-                .call()?;
+        let mut resp = ureq::get("https://api.github.com/repos/ItzPabz/oxidize/releases/latest")
+            .header("User-Agent", "oxidize")
+            .call()?;
         let release: Release = resp.body_mut().read_json()?;
 
         let asset = release
@@ -360,7 +360,7 @@ fn compile_all(
     plugins: &[Plugin],
     references: &[PathBuf],
     compiler_dir: &Path,
-) -> Result<Vec<(String, CompileResult)>, Box<dyn std::error::Error>> {
+) -> Result<Vec<(String, String, CompileResult)>, Box<dyn std::error::Error>> {
     let config = PdCString::from_os_str(compiler_dir.join("OxideCompiler.runtimeconfig.json"))?;
     let dll = PdCString::from_os_str(compiler_dir.join("OxideCompiler.dll"))?;
 
@@ -418,7 +418,7 @@ fn compile_all(
         } else {
             CompileResult::Failure(resp.errors)
         };
-        results.push((plugin.name.clone(), result));
+        results.push((plugin.name.clone(), plugin.author.clone(), result));
     }
     Ok(results)
 }
