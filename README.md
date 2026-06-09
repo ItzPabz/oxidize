@@ -1,6 +1,6 @@
 # Oxidize
 
-A CLI that checks whether your Oxide Rust plugins compile, before you put them to a live server.
+A CLI tool that checks whether your Oxide Rust plugins compile, before you put them to a live server.
 
 ## AI Use Disclosure
 
