@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-compiler:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish compiler
+        run: dotnet publish compiler/OxideCompiler.csproj -c Release -o publish
+
+      - name: Zip compiler
+        shell: pwsh
+        run: Compress-Archive -Path "publish/*" -DestinationPath "OxideCompiler.zip" -Force
+
+      - name: Attach OxideCompiler.zip to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: OxideCompiler.zip
+
+  build-rust:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            built: target/release/oxidize.exe
+            asset: oxidize-windows.exe
+          - os: ubuntu-latest
+            built: target/release/oxidize
+            asset: oxidize-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Rename for the release
+        shell: bash
+        run: cp "${{ matrix.built }}" "${{ matrix.asset }}"
+
+      - name: Attach binary to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}
