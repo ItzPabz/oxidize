@@ -2,9 +2,14 @@
 
 A CLI that checks whether your Oxide Rust plugins compile, before you put them to a live server.
 
-## AI USE DISCLOUSURE
+## AI Use Disclosure
 
-I utilized AI to explicitely for the C# compiler and the compile_all function. I will be writing these by hand eventually but I want to be honest about AI use in this project! 
+I used AI for two parts of this project:
+
+- The C# compiler bridge — [`compiler/Bridge.cs`](compiler/Bridge.cs)
+- The `compile_all` function — [`src/main.rs`](src/main.rs#L359)
+
+I plan to write these by hand eventually, but I want to be honest about AI use in this project!
 
 ## Install
 
