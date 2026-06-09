@@ -6,8 +6,8 @@ A CLI that checks whether your Oxide Rust plugins compile, before you put them t
 
 I used AI for two parts of this project:
 
-- The C# compiler bridge — [`compiler/Bridge.cs`](compiler/Bridge.cs)
-- The `compile_all` function — [`src/main.rs`](src/main.rs#L359)
+- The C# compiler bridge in [`compiler/Bridge.cs`](compiler/Bridge.cs)
+- The `compile_all` function in [`src/main.rs`](src/main.rs#L359)
 
 I plan to write these by hand eventually, but I want to be honest about AI use in this project!
 
