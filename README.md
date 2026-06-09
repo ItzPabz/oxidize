@@ -1,6 +1,10 @@
 # Oxidize
 
-A CLI that checks whether your Oxide/uMod Rust plugins (`.cs`) actually compile — before you push them to a live server.
+A CLI that checks whether your Oxide Rust plugins compile, before you put them to a live server.
+
+## AI USE DISCLOUSURE
+
+I utilized AI to explicitely for the C# compiler and the compile_all function. I will be writing these by hand eventually but I want to be honest about AI use in this project! 
 
 ## Install
 
@@ -32,7 +36,7 @@ oxidize <PATH>
 oxidize ./plugins
 ```
 ```
-OK    Working Plugin
-FAIL  Broken Plugin (3 errors)
+OK    Working Plugin by Me
+FAIL  Broken Plugin by You (3 errors)
         error CS0117: 'MemoryExtensions' does not contain ...
 ```
