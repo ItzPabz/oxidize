@@ -6,3 +6,4 @@
 # .NET compiler bridge build output (source under compiler/ stays tracked)
 compiler/bin/
 compiler/obj/
+compiler/publish/
