@@ -33,8 +33,10 @@ oxidize <PATH>
 
 | Flag | Description |
 |------|-------------|
-| `-o, --output <human\|json>` | Output format (default: `human`) |
 | `-s, --staging` | Check against the Rust staging branch |
+| `-y, --yes` | Skip the confirmation prompt before the first-time library download |
+
+Oxidize must be run from the CLI.
 
 ## Example
 
@@ -45,4 +47,6 @@ oxidize ./plugins
 OK    Working Plugin by Me
 FAIL  Broken Plugin by You (3 errors)
         error CS0117: 'MemoryExtensions' does not contain ...
+
+1 OK  1 FAIL  0 ERROR
 ```
