@@ -1,17 +1,19 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
+use console::style;
+use dialoguer::Confirm;
 use directories::ProjectDirs;
+use indicatif::{ProgressBar, ProgressStyle};
 use netcorehost::{nethost, pdcstr, pdcstring::PdCString};
+use rayon::prelude::*;
 use std::ffi::{CStr, CString};
-use std::process::Command;
+use std::io::IsTerminal;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 use std::{
     fs::DirEntry,
     path::{Path, PathBuf},
 };
-
-use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
-use rayon::prelude::*;
 
 #[derive(serde::Serialize)]
 struct CompileRequest<'a> {
@@ -26,21 +28,15 @@ struct CompileResponse {
     errors: Vec<String>,
 }
 
-#[derive(ValueEnum, Clone, Debug)]
-pub enum Format {
-    Human,
-    Json,
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about = "Oxide plugin compile checker")]
 struct Args {
-    // TODO: See if PathBuf allows for single file and dir
     #[arg(value_name = "PATH")]
     path: PathBuf,
 
-    #[arg(short, long, value_enum, default_value_t = Format::Human)]
-    output: Format,
+    // TODO: future `--output json` / website export (like Spark)
+    #[arg(short, long, default_value_t = false)]
+    yes: bool,
 
     #[arg(short, long, default_value_t = false)]
     staging: bool,
@@ -70,19 +66,18 @@ impl Plugin {
 
         let info_line = contents.lines().find(|line| line.contains("[Info("));
 
-        let (name, author) = match info_line {
-            Some(line) => {
+        let (name, author) = info_line
+            .and_then(|line| {
                 let parts: Vec<&str> = line.split('"').collect();
-                (parts[1].to_string(), parts[3].to_string())
-            }
-            None => {
+                Some((parts.get(1)?.to_string(), parts.get(3)?.to_string()))
+            })
+            .unwrap_or_else(|| {
                 let stem = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown");
                 (stem.to_string(), "Unknown".to_string())
-            }
-        };
+            });
 
         Ok(Plugin { path, name, author })
     }
@@ -117,26 +112,26 @@ impl Branch {
     }
 }
 
-#[derive(Debug)]
-enum LibraryStatus {
-    NotInstalled,
-    UpToDate,
-    Outdated { have: String, latest: String },
-}
-
 #[derive(serde::Deserialize)]
 struct Release {
     tag_name: String,
     assets: Vec<Asset>,
 }
+
 #[derive(serde::Deserialize)]
 struct Asset {
     name: String,
     browser_download_url: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<ExitCode, Box<dyn std::error::Error>> {
     let args: Args = Args::parse();
+
+    if !std::io::stdin().is_terminal() {
+        eprintln!("oxidize must be run from the cli");
+        return Ok(ExitCode::FAILURE);
+    }
+
     let branch: Branch = if args.staging {
         Branch::Staging
     } else {
@@ -150,18 +145,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::create_dir_all(&custom_path)?;
 
-    ensure_libraries(&dirs, &branch)?;
+    ensure_libraries(&dirs, &branch, args.yes)?;
     ensure_oxide(&dirs, &branch)?;
     ensure_compiler(&dirs)?;
 
-    let plugins = traverse(&args.path, "cs", false)?;
+    if !args.path.exists() {
+        eprintln!("path not found: {}", args.path.display());
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let plugins = if args.path.is_file() {
+        if args.path.extension().and_then(|e| e.to_str()) != Some("cs") {
+            eprintln!("not a .cs plugin: {}", args.path.display());
+            return Ok(ExitCode::FAILURE);
+        }
+        vec![args.path.clone()]
+    } else {
+        traverse(&args.path, "cs", false)?
+    };
+
     let libraries = traverse(&library_path, "dll", true)?;
 
-    println!(
-        "Found {} plugin(s) and {} library file(s)",
-        plugins.len(),
-        libraries.len()
-    );
+    if plugins.is_empty() {
+        eprintln!("no plugins found in {}", args.path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
 
     let mut parsed = Vec::new();
 
@@ -172,13 +180,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let installed_compiler = compiler_dir(&dirs);
     let symbols = branch.preprocessor_symbols();
+
+    let (mut ok, mut fail, mut err) = (0, 0, 0);
+
     for (name, author, result) in compile_all(&parsed, &libraries, &installed_compiler, &symbols)? {
         match result {
-            CompileResult::Success => println!("{}  {name} by {author}", style("OK").green()),
-            CompileResult::Failure(errors) => {
+            CompileResult::Success => {
+                ok += 1;
                 println!(
-                    "{}  {name} by {author} ({} errors)",
-                    style("FAIL").yellow(),
+                    "{} {name} by {author}",
+                    style(format!("{:<5}", "OK")).green()
+                );
+            }
+            CompileResult::Failure(errors) => {
+                fail += 1;
+                println!(
+                    "{} {name} by {author} ({} errors)",
+                    style(format!("{:<5}", "FAIL")).yellow(),
                     errors.len()
                 );
                 for e in &errors {
@@ -186,12 +204,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             CompileResult::Errored(msg) => {
-                println!("{} {name} by {author}: {msg}", style("ERROR").red())
+                err += 1;
+                println!(
+                    "{} {name} by {author}: {msg}",
+                    style(format!("{:<5}", "ERROR")).red()
+                )
             }
         }
     }
 
-    Ok(())
+    println!(
+        "{} OK  {} FAIL  {} ERROR",
+        style(ok).green(),
+        style(fail).yellow(),
+        style(err).red(),
+    );
+
+    if fail + err > 0 {
+        Ok(ExitCode::FAILURE)
+    } else {
+        Ok(ExitCode::SUCCESS)
+    }
 }
 
 fn traverse(path: &Path, ext: &str, recurse: bool) -> std::io::Result<Vec<PathBuf>> {
@@ -216,32 +249,38 @@ fn traverse(path: &Path, ext: &str, recurse: bool) -> std::io::Result<Vec<PathBu
 }
 
 fn prereq_checks(dirs: &ProjectDirs) {
-    println!("Running dependency checks");
-
     let exe_name = format!("DepotDownloader{}", std::env::consts::EXE_SUFFIX);
     let tool_dirs = dirs.data_local_dir().join("tools");
     let depot = tool_dirs.join(exe_name);
 
+    let progress = ProgressBar::new_spinner();
+    progress.set_message("Checking prerequisites...");
+    progress.enable_steady_tick(Duration::from_millis(100));
+
     if !depot.exists() {
+        progress.finish_and_clear();
         eprintln!("DepotDownloader not found at {}", depot.display());
         eprintln!("Download it from: https://github.com/SteamRE/DepotDownloader/releases");
         eprintln!("and place it there, then re-run.");
         std::process::exit(1);
     }
-    println!("  DepotDownloader is installed");
+    progress.set_message("DepotDownloader is installed");
 
     let dotnet = Command::new("dotnet").arg("--version").output();
 
     match dotnet {
         Ok(out) if out.status.success() => {
             let version = String::from_utf8_lossy(&out.stdout);
-            println!("  .NET {} detected", version.trim());
+            progress.set_message(format!(".NET {} detected", version.trim()));
         }
         _ => {
+            progress.finish_and_clear();
             eprintln!(" .NET SDK not found. Install it from https://dotnet.microsoft.com/download");
             std::process::exit(1);
         }
     }
+
+    progress.finish_with_message("Prerequisites working!");
 }
 
 fn installed_manifest(library_path: &Path) -> Option<String> {
@@ -256,17 +295,38 @@ fn installed_manifest(library_path: &Path) -> Option<String> {
     None
 }
 
-fn ensure_libraries(dirs: &ProjectDirs, branch: &Branch) -> std::io::Result<()> {
+fn ensure_libraries(dirs: &ProjectDirs, branch: &Branch, yes: bool) -> std::io::Result<()> {
     let library_path = dirs.data_local_dir().join(branch.folder_name());
     let assembly = library_path.join("RustDedicated_Data/Managed/Assembly-CSharp.dll");
 
+    let progress = ProgressBar::new_spinner();
+    progress.set_message("Checking for Rust Assemblies...");
+    progress.enable_steady_tick(Duration::from_millis(100));
+
     if assembly.exists() {
-        match installed_manifest(&library_path) {
-            Some(manifest) => println!("Libraries installed (manifest {manifest})."),
-            None => println!("Libraries installed."),
-        }
+        let msg = match installed_manifest(&library_path) {
+            Some(manifest) => format!("Libraries installed (manifest {manifest})"),
+            None => "Libraries installed".to_string(),
+        };
+        progress.finish_with_message(msg);
     } else {
-        println!("Libraries missing. Installing now.");
+        if !yes {
+            let confirmation = progress
+                .suspend(|| {
+                    Confirm::new()
+                        .with_prompt("Rust reference assemblies are missing. Would you like to download it now?")
+                        .default(true)
+                        .interact()
+                })
+                .map_err(std::io::Error::other)?;
+
+            if !confirmation {
+                progress.finish_and_clear();
+                return Err(std::io::Error::other("download declined by user"));
+            }
+        }
+
+        progress.set_message("Libraries missing. Installing now.");
         let exe_name = format!("DepotDownloader{}", std::env::consts::EXE_SUFFIX);
         let tool_dirs = dirs.data_local_dir().join("tools");
         let depot = tool_dirs.join(exe_name);
@@ -284,13 +344,37 @@ fn ensure_libraries(dirs: &ProjectDirs, branch: &Branch) -> std::io::Result<()> 
             .arg("-dir")
             .arg(&library_path)
             .arg("-filelist")
-            .arg(&filelist);
+            .arg(&filelist)
+            .stdout(Stdio::piped());
 
         if let Branch::Staging = branch {
             depot_cmd.arg("-branch").arg("staging");
         }
 
-        depot_cmd.status()?;
+        progress.set_message("Downloading Rust Assemblies...");
+
+        let mut child = depot_cmd.spawn()?;
+
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let reader = BufReader::new(stdout);
+        let mut log: Vec<String> = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            progress.set_message(line.clone());
+            log.push(line);
+        }
+
+        let status = child.wait()?;
+        if !status.success() {
+            progress.finish_and_clear();
+            for line in &log {
+                eprintln!("{line}");
+            }
+            return Err(std::io::Error::other("DepotDownloader failed"));
+        }
+
+        progress.finish_with_message("Rust assemblies installed successfully");
     }
     Ok(())
 }
@@ -312,6 +396,7 @@ fn ensure_oxide(dirs: &ProjectDirs, branch: &Branch) -> Result<(), Box<dyn std::
                 .header("User-Agent", "oxidize")
                 .call()?;
         let release: Release = resp.body_mut().read_json()?;
+        progress.set_message(format!("Downloading Oxide {}…", release.tag_name));
 
         let asset = release
             .assets
@@ -360,6 +445,7 @@ fn ensure_compiler(dirs: &ProjectDirs) -> Result<(), Box<dyn std::error::Error>>
             .header("User-Agent", "oxidize")
             .call()?;
         let release: Release = resp.body_mut().read_json()?;
+        progress.set_message(format!("Downloading OxideCompiler {}…", release.tag_name));
 
         let asset = release
             .assets
@@ -425,7 +511,7 @@ fn compile_all(
         }
     }
 
-    let refs: Vec<String> = references 
+    let refs: Vec<String> = references
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
